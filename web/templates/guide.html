@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}使用说明{% endblock %}
+{% block body %}
+<div class="fx-page">
+
+  <div class="g-hero">
+    <div class="g-ic">📘</div>
+    <div>
+      <h2>使用说明</h2>
+      <p>无声有译 · 手语识别系统 —— 从启动到采集样本，一页看懂</p>
+    </div>
+  </div>
+
+  <div class="g-layout">
+    <div class="g-toc">
+      <a href="#s1" class="on">① 系统组成</a>
+      <a href="#s2">② 启动顺序</a>
+      <a href="#s3">③ 看板页</a>
+      <a href="#s4">④ 手语词库页</a>
+      <a href="#s5">⑤ 历史记录页</a>
+      <a href="#s6">⑥ 样本采集页</a>
+      <a href="#s7">⑦ 常见问题</a>
+    </div>
+
+    <div>
+      <!-- ① 系统组成 -->
+      <div class="g-block" id="s1">
+        <h3><span class="g-ic">🧩</span>系统组成</h3>
+        <div class="g-lead">四个角色，各干各的活，数据走 MQTT 和 HTTP 汇到一起</div>
+        <div class="g-flow">
+          <span class="node">🤟 识别端（桌面软件 / 1.py）</span><span class="arr">➜</span>
+          <span class="node">📡 数据桥 bridge_mqtt.py</span><span class="arr">➜</span>
+          <span class="node">🌐 本网站（:5000）</span><span class="arr">➜</span>
+          <span class="node">🖥️ ESP32 TFT 屏</span>
+        </div>
+        <ul>
+          <li><b>识别端</b>：打开摄像头做手语识别（MediaPipe 21 关键点 + kNN 分类），支持语音转文字，也能直接把结果润色成通顺句子。</li>
+          <li><b>本网站</b>：中控台。看实时识别结果、管阈值、控 TFT 屏幕、查历史、采集新样本，全在浏览器里完成。</li>
+          <li><b>ESP32 TFT</b>：小屏幕终端，每 1~2 秒向网站轮询一次，有新内容就重画。</li>
+        </ul>
+      </div>
+
+      <!-- ② 启动顺序 -->
+      <div class="g-block" id="s2">
+        <h3><span class="g-ic">🚀</span>启动顺序</h3>
+        <div class="g-lead">顺序有讲究，反了会互相连不上</div>
+        <ol>
+          <li>双击桌面的 <b>手语翻译.exe</b>（识别端，开摄像头）。</li>
+          <li>开 web 后端：命令行运行 <code>python web\app.py</code>（桌面软件会自动拉起，一般不用手动）。浏览器访问 <code>http://127.0.0.1:5000</code>。</li>
+          <li>开数据桥：<code>python web\bridge_mqtt.py</code>（识别结果 → 网站 → TFT 靠它转发）。</li>
+          <li>ESP32 上电（已烧录固件的情况下），屏幕右上角小点变绿即连上。</li>
+        </ol>
+        <div class="tip"><i>💡</i><span>嫌麻烦就用项目根目录的 <b>0_一键启动全部.bat</b>，一条命令全拉起；结束用 <b>99_停止全部服务.bat</b>。</span></div>
+      </div>
+
+      <!-- ③ 看板页 -->
+      <div class="g-block" id="s3">
+        <h3><span class="g-ic">📊</span>看板页（首页）</h3>
+        <div class="g-lead">实时盯着两条通道：手语在左（黄字），语音在右（蓝字）</div>
+        <ul>
+          <li><b>通道 A · 手语识别</b>：比划时句子逐词出现在大字区，下方是置信度进度条。<b>低于阈值的词会标红并被拦截</b>——只在网页显示，不上 TFT 屏。</li>
+          <li><b>通道 B · 语音转文字</b>：对麦克风说话，转写结果直接显示。</li>
+          <li><b>置信阈值</b>：默认 0.50。想更严格就调高（比如 0.60），误识别会变少，但正确的词也可能被拦。改完点"保存阈值"。</li>
+          <li><b>推送模式</b>：<b>自动推送</b> = 识别到就上 TFT；<b>单句推送</b> = TFT 只接受你在"手动下发"框里输入的内容，适合演示时精确控屏。</li>
+          <li><b>锁屏 / 清屏</b>：锁屏后任何内容都上不了 TFT；清屏把两行内容清空。</li>
+        </ul>
+      </div>
+
+      <!-- ④ 词库页 -->
+      <div class="g-block" id="s4">
+        <h3><span class="g-ic">📚</span>手语词库页</h3>
+        <div class="g-lead">当前模型认识的所有词都在这，点卡片看详情</div>
+        <ul>
+          <li>每个词显示<b>样本数量</b>和标准手势图、释义。</li>
+          <li>点开卡片可看该词的全部采样照片，用来核对手势比得标不标准。</li>
+          <li>样本太少（比如只有几条）的词识别会不稳，建议去"样本采集"页补录。</li>
+        </ul>
+      </div>
+
+      <!-- ⑤ 历史页 -->
+      <div class="g-block" id="s5">
+        <h3><span class="g-ic">🗂️</span>历史记录页</h3>
+        <ul>
+          <li>分<b>手语</b>、<b>语音</b>两个标签页，手语记录带置信度分数、单/双手、当时拼到的句子。</li>
+          <li>被阈值拦截的记录标红显示"拦截"，方便回溯"为什么没上屏"。</li>
+          <li>每条手语记录带<b>抓拍图</b>，点缩略图看大图。</li>
+          <li>右上角可导出 CSV（Excel 直接打开不乱码），交作业、写报告直接用。</li>
+        </ul>
+      </div>
+
+      <!-- ⑥ 采集页 -->
+      <div class="g-block" id="s6">
+        <h3><span class="g-ic">🎥</span>样本采集页</h3>
+        <div class="g-lead">教模型学新手势的唯一入口——录样本 → AI 自检 → 入库 → 重训</div>
+        <ol>
+          <li><b>新建标签</b>：输入词（如"谢谢"），选好手位规则（单手右手 / 单手左手 / 双手）。手位不符的帧会被自动丢弃，防误录。</li>
+          <li><b>录制</b>：点采集后先 3-2-1 倒计时，然后<b>把你的手举进画面，检测到才自动开录</b>——动作没做出来不会白录。接着完整做一遍动作，<b>做完停 0.6 秒（或手放下）自动结束</b>，最长录 3 秒，中途点按钮可取消。连贯动作也能完整录进去。</li>
+          <li><b>AI 自检</b>：点"开始自检"，系统用当前模型反测你的新样本。<b>不用填任何阈值</b>——通过率 ≥60% 且手位正确率 ≥80% 才算合格；不通过会给 A（直接重录）/ B（先入库再重训）两条建议。</li>
+          <li><b>入库 + 重训</b>：样本合格后点"入库"，再点"重新训练"。训练完成后新词立刻生效，识别端不用重启。</li>
+        </ol>
+        <div class="warn"><i>⚠️</i><span><b>必须用 <code>http://127.0.0.1:5000</code> 或 <code>http://localhost:5000</code> 打开采集页</b>，浏览器安全策略只允许本机地址开摄像头；用局域网 IP 打开会黑屏（页面会提示并给一键跳转按钮）。</span></div>
+        <div class="tip"><i>💡</i><span>打开采集页后，<b>桌面软件的摄像头会自动让位</b>（8 秒内检测到你在采集就暂停它的摄像头，画面变成黄字提示），关掉采集页标签页后自动恢复，不用手动开关。</span></div>
+        <div class="tip"><i>💡</i><span>采集时手机也能看：别人用局域网地址（或扫二维码）打开采集页会进入<b>围观模式</b>，实时同步你电脑端的画面、骨架和录制进度，只看不操作，适合演示。</span></div>
+      </div>
+
+      <!-- ⑦ FAQ -->
+      <div class="g-block" id="s7">
+        <h3><span class="g-ic">🔧</span>常见问题</h3>
+        <div class="g-qa"><q>采集页摄像头黑屏 / 打不开？</q>
+          <p>三种情况：地址不对（用 127.0.0.1 打开）、浏览器没给权限（地址栏左边锁图标里允许摄像头）、摄像头被别的软件占了（关掉其它占用摄像头的程序再刷新）。</p></div>
+        <div class="g-qa"><q>桌面软件画面定格不动，提示摄像头被占用？</q>
+          <p>这是正常让位：你在采集页录样本时软件主动停了摄像头。关掉采集页（或切走标签页 8 秒以上）会自动恢复。</p></div>
+        <div class="g-qa"><q>识别出来但 TFT 屏不显示？</q>
+          <p>按顺序查：① 看板里该词是不是被标红"拦截"（低于阈值）；② 是不是开了"单句推送"模式；③ 是不是点了"锁屏"；④ ESP32 和本机是否在同一个局域网、bridge_mqtt.py 是否在跑。</p></div>
+        <div class="g-qa"><q>某个词总是识别错？</q>
+          <p>去采集页给这个词补录几条样本（换角度、换距离），自检通过后入库重训。样本越多越稳，同一个词建议保持 15 条以上、覆盖不同距离。</p></div>
+        <div class="g-qa"><q>历史页导出的 CSV 用 Excel 打开是乱码？</q>
+          <p>不会乱——导出用的是 utf-8-sig 编码，Excel 双击直接打开。如果你用了 WPS 老版本还乱码，在 WPS 里选"文件 → 打开"并手动指定 UTF-8 编码。</p></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* 目录滚动高亮 */
+(function(){
+  var links = document.querySelectorAll(".g-toc a");
+  var blocks = document.querySelectorAll(".g-block");
+  function onScroll(){
+    var pos = window.scrollY + 140, cur = links[0];
+    blocks.forEach(function(b){ if(b.offsetTop <= pos) cur = document.querySelector('.g-toc a[href="#' + b.id + '"]'); });
+    links.forEach(function(a){ a.classList.toggle("on", a === cur); });
+  }
+  window.addEventListener("scroll", onScroll, {passive: true});
+  onScroll();
+  links.forEach(function(a){
+    a.addEventListener("click", function(e){
+      e.preventDefault();
+      var t = document.querySelector(a.getAttribute("href"));
+      if(t) window.scrollTo({top: t.offsetTop - 76, behavior: "smooth"});
+    });
+  });
+})();
+</script>
+{% endblock %}

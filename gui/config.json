@@ -1,0 +1,7 @@
+{
+  "backend": "http://127.0.0.1:5000",
+  "agent": "http://127.0.0.1:8080/api/agent/compose",
+  "camera": 0,
+  "push_polished_to_tft": true,
+  "snapshot": true
+}

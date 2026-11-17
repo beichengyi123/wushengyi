@@ -1,0 +1,25 @@
+# =========================================================
+#  无声有译 · 智能体服务配置
+#  DeepSeek 密钥只写在这里(后端), ESP32 和桌面软件都不保存
+# =========================================================
+server:
+  port: 8080
+
+agent:
+  deepseek:
+    api-key: 在这里填入你的DeepSeek密钥
+    base-url: https://api.deepseek.com/v1
+    model: deepseek-chat
+    timeout-seconds: 20
+    temperature: 0.2
+  store:
+    enabled: true                      # 处理完成后写回网站数据库
+    backend-url: http://127.0.0.1:5000 # Flask 网站地址(换电脑改这里)
+    timeout-seconds: 5
+
+logging:
+  level:
+    root: INFO
+    com.wusheng.agent: INFO
+  pattern:
+    console: "%d{HH:mm:ss} %-5level %logger{0} - %msg%n"

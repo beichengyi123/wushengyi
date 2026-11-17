@@ -1,0 +1,58 @@
+# -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_all
+
+datas = [('C:/Users/Administrator/Desktop/无声有译-项目/1.py', '.'), ('C:/Users/Administrator/Desktop/无声有译-项目/sign_guard.py', '.'), ('C:/Users/Administrator/Desktop/无声有译-项目/sign_model.npz', '.'), ('C:/Users/Administrator/Desktop/无声有译-项目/sentence_api.py', '.'), ('C:/Users/Administrator/Desktop/无声有译-项目/voice_api.py', '.'), ('C:/Users/Administrator/Desktop/无声有译-项目/gui/icon.ico', '.')]
+binaries = []
+hiddenimports = ['PIL._tkinter_finder', 'PIL.ImageDraw', 'PIL.ImageFont']
+hiddenimports += collect_submodules('PIL')
+hiddenimports += collect_submodules('numpy')
+hiddenimports += collect_submodules('segno')
+tmp_ret = collect_all('mediapipe')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('paho')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+
+
+a = Analysis(
+    ['C:/Users/Administrator/Desktop/无声有译-项目/gui/gui_app.py'],
+    pathex=['C:/Users/Administrator/Desktop/无声有译-项目/gui/_libs'],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+    optimize=0,
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name='WuShengYi',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=['C:/Users/Administrator/Desktop/无声有译-项目/gui/icon.ico'],
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='WuShengYi',
+)

@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}历史记录{% endblock %}
+{% block body %}
+<div class="card">
+  <h3>历史记录管理</h3>
+  <div class="tabs">
+    <div class="seg">
+      <button id="tSign" class="on" onclick="switchType('sign')">手语识别记录</button>
+      <button id="tVoice" onclick="switchType('voice')">语音转写记录</button>
+    </div>
+    <span style="flex:1"></span>
+    <a class="btn" id="exportBtn" href="/api/export/sign.csv" download>导出 CSV</a>
+  </div>
+  <div class="scroll" style="max-height:520px">
+    <table>
+      <thead id="head"></thead>
+      <tbody id="body"></tbody>
+    </table>
+  </div>
+  <p class="hint">「抓拍」列是识别出这个词那一刻的画面，点缩略图看大图。模型认错的时候，能直接看出是手比歪了还是门槛不合适。</p>
+</div>
+
+<!-- 抓拍大图弹层 -->
+<div class="mask" id="mask" onclick="if(event.target===this) closeShot()">
+  <div class="modal" style="width:auto;max-width:92vw;text-align:center">
+    <span class="close" onclick="closeShot()">×</span>
+    <img id="shotBig" alt="抓拍大图"
+         style="max-width:86vw;max-height:78vh;border-radius:12px;background:#0d1520">
+    <div class="m" id="shotInfo" style="margin-top:10px"></div>
+  </div>
+</div>
+{% endblock %}
+{% block script %}
+let typ = "sign";
+let lastKey = "";      // 数据没变就不重绘, 避免每 3 秒刷新时缩略图闪烁
+
+async function load(){
+  const j = await (await fetch("/api/records?type=" + typ + "&limit=500")).json();
+  const head = document.getElementById("head"), body = document.getElementById("body");
+  document.getElementById("exportBtn").href = "/api/export/" + typ + ".csv";
+
+  const key = typ + "|" + j.rows.length + "|" + (j.rows[0] ? j.rows[0].id : "");
+  if(key === lastKey) return;
+  lastKey = key;
+
+  if(!j.rows.length){
+    head.innerHTML = ""; body.innerHTML = '<tr><td colspan="9" class="empty">还没有记录</td></tr>';
+    return;
+  }
+  if(typ === "sign"){
+    head.innerHTML = "<tr><th>词</th><th>抓拍</th><th>置信度</th><th>距离</th><th>门槛</th><th>手</th><th>当时本句</th><th>终端</th><th>时间</th></tr>";
+    body.innerHTML = j.rows.map(r => {
+      const w = (r.word || "").replace(/'/g, "");
+      const sc = r.score !== null ? Math.round(r.score * 100) : -1;
+      const shot = r.image
+        ? `<img class="thumb" src="/static/${r.image}" alt="抓拍" loading="lazy"
+                onclick="showShot('/static/${r.image}','${w}',${sc},'${r.ts || ""}')">`
+        : '<span class="noshot">—</span>';
+      return `
+      <tr class="sign${r.blocked ? ' blocked' : ''}">
+        <td>${r.word || ""}</td>
+        <td>${shot}</td>
+        <td class="num">${r.score !== null ? Math.round(r.score*100) + '%' : "—"}</td>
+        <td class="num">${r.dist !== null ? r.dist : "—"}</td>
+        <td class="num">${r.th !== null ? r.th : "—"}</td>
+        <td>${r.hand || "—"}</td>
+        <td>${r.sentence || "—"}</td>
+        <td>${r.blocked ? "已拦截" : "已推"}</td>
+        <td class="num">${r.ts}</td></tr>`;
+    }).join("");
+  } else {
+    head.innerHTML = "<tr><th>识别文本</th><th>时间</th></tr>";
+    body.innerHTML = j.rows.map(r => `
+      <tr class="voice"><td>${r.text}</td><td class="num">${r.ts}</td></tr>`).join("");
+  }
+}
+
+function showShot(src, word, score, ts){
+  document.getElementById("shotBig").src = src;
+  document.getElementById("shotInfo").innerHTML =
+    "词: " + (word || "—") +
+    "　　置信度: " + (score >= 0 ? score + "%" : "—") +
+    "　　" + (ts || "");
+  document.getElementById("mask").classList.add("show");
+}
+function closeShot(){
+  document.getElementById("mask").classList.remove("show");
+  document.getElementById("shotBig").src = "";
+}
+document.addEventListener("keydown", e => { if(e.key === "Escape") closeShot(); });
+
+function switchType(t){
+  typ = t;
+  lastKey = "";
+  document.getElementById("tSign").className = t === "sign" ? "on" : "";
+  document.getElementById("tVoice").className = t === "voice" ? "on" : "";
+  load();
+}
+load(); setInterval(load, 3000);
+{% endblock %}

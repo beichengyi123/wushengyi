@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}无声有译{% endblock %} · 中控</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<!-- 动态背景装饰层(纯视觉, 不挡操作) -->
+<div class="bg-fx" aria-hidden="true">
+  <i class="orb o1"></i>
+  <i class="orb o2"></i>
+  <i class="orb o3"></i>
+  <i class="stars"></i>
+</div>
+
+<header class="top">
+  <div class="brand">
+    <span class="logo" title="无声有译">🤟</span>
+    <span class="btxt">无声有译<em>局域网中控</em></span>
+  </div>
+  <nav>
+    <a href="/" class="{{ 'on' if nav=='dash' else '' }}">看板</a>
+    <a href="/words" class="{{ 'on' if nav=='words' else '' }}">手语词库</a>
+    <a href="/history" class="{{ 'on' if nav=='history' else '' }}">历史记录</a>
+    <a href="/collect" class="{{ 'on' if nav=='collect' else '' }}">样本采集</a>
+    <a href="/guide" class="{{ 'on' if nav=='guide' else '' }}">使用说明</a>
+  </nav>
+  <div id="net" class="dot off" title="后端连接状态"></div>
+</header>
+<main>
+{% block body %}{% endblock %}
+</main>
+
+<script>
+/* ============ 全站 3D 交互: 卡片跟随鼠标倾斜 + 光斑 ============ */
+(function(){
+  var cur = null, pending = null, raf = 0;
+  function apply(el, cx, cy){
+    var r = el.getBoundingClientRect();
+    var x = (cx - r.left) / r.width, y = (cy - r.top) / r.height;
+    if(x < -0.2 || x > 1.2 || y < -0.2 || y > 1.2) return;
+    el.style.setProperty("--mx", (x * 100).toFixed(1) + "%");
+    el.style.setProperty("--my", (y * 100).toFixed(1) + "%");
+    var rx = (0.5 - y) * 5, ry = (x - 0.5) * 7;
+    el.style.transform = "perspective(1000px) rotateX(" + rx.toFixed(2) + "deg) rotateY(" + ry.toFixed(2) + "deg) translateY(-3px)";
+  }
+  function reset(el){ el.style.transform = ""; }
+  document.addEventListener("mousemove", function(e){
+    var el = e.target && e.target.closest ? e.target.closest(".fx-card, .wcard, .g-block") : null;
+    if(cur && cur !== el){ reset(cur); cur = null; }
+    if(el){
+      cur = el; pending = [el, e.clientX, e.clientY];
+      if(!raf){ raf = requestAnimationFrame(function(){
+        raf = 0; if(pending){ apply(pending[0], pending[1], pending[2]); pending = null; }
+      }); }
+    }
+  }, {passive: true});
+  document.addEventListener("mouseleave", function(){ if(cur){ reset(cur); cur = null; } });
+})();
+
+/* ============ 看板大字弹入动画(给 index 页用, 其他页无元素自动跳过) ============ */
+function fxPopText(el, txt){
+  if(!el || el.textContent === txt) return;
+  el.textContent = txt;
+  el.classList.remove("pop"); void el.offsetWidth; el.classList.add("pop");
+}
+</script>
+<script>{% block script %}{% endblock %}</script>
+</body>
+</html>

@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}手语词库{% endblock %}
+{% block body %}
+<div class="card">
+  <h3>手语词库 <span class="tag" id="wCount"></span></h3>
+  <div class="sub" style="margin-bottom:14px">共 15 个词，点击卡片查看手部骨架样本（由采集的真实样本自动绘制）。</div>
+  <div class="wgrid" id="grid"></div>
+</div>
+
+<div class="mask" id="mask" onclick="if(event.target===this) closeModal()">
+  <div class="modal">
+    <span class="close" onclick="closeModal()">×</span>
+    <h4 id="mWord"></h4>
+    <div class="m" id="mMeaning"></div>
+    <div class="imgs" id="mImgs"></div>
+    <div class="m" style="margin-top:12px" id="mCount"></div>
+  </div>
+</div>
+{% endblock %}
+{% block script %}
+async function load(){
+  const j = await (await fetch("/api/words")).json();
+  document.getElementById("wCount").textContent = j.words.length + " 个词";
+  document.getElementById("grid").innerHTML = j.words.map(w => `
+    <div class="wcard" onclick="openW('${w.word}')">
+      ${w.image ? `<img src="/static/${w.image}" alt="${w.word}">` : '<div style="aspect-ratio:1"></div>'}
+      <div class="t"><b>${w.word}</b><span class="n">${w.count} 条样本</span><p>${w.meaning}</p></div>
+    </div>`).join("");
+}
+function openW(word){
+  fetch("/api/words").then(r => r.json()).then(j => {
+    const w = j.words.find(x => x.word === word);
+    document.getElementById("mWord").textContent = word;
+    document.getElementById("mMeaning").textContent = w.meaning || "（暂无释义）";
+    document.getElementById("mImgs").innerHTML = w.samples.length
+      ? w.samples.map(s => `<img src="/static/${s}">`).join("")
+      : '<span style="color:#3d4f66">没有样本图</span>';
+    document.getElementById("mCount").textContent = "样本共 " + w.count + " 条，上面是其中 3 条的骨架示意。";
+    document.getElementById("mask").classList.add("show");
+  });
+}
+function closeModal(){ document.getElementById("mask").classList.remove("show"); }
+document.addEventListener("keydown", e => { if(e.key === "Escape") closeModal(); });
+load();
+{% endblock %}

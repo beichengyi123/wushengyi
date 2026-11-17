@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block title %}看板{% endblock %}
+{% block body %}
+<div class="fx-page">
+
+  <!-- ===== 两个识别通道: 主视觉区 ===== -->
+  <div class="fx-hero">
+    <div class="fx-card fx-ch sign">
+      <div class="fx-head">
+        <div class="fx-ic">✋</div>
+        <div class="fx-title">
+          <h3>通道 A · 手语识别</h3>
+          <span class="fx-pill" id="aState">等待识别</span>
+        </div>
+        <div class="fx-live" id="aLive"><i></i>待机</div>
+      </div>
+      <div class="fx-big muted" id="aLine">（打开 1.py，比划后这里实时出现词）</div>
+      <div class="fx-bar"><i id="aBar" style="width:0%"></i></div>
+      <div class="fx-score"><span id="aWord">最近词：—</span><span id="aScore">置信度 —</span></div>
+      <div class="fx-sub"><span id="aDetail"></span><span id="aBlocked"></span></div>
+    </div>
+
+    <div class="fx-card fx-ch voice">
+      <div class="fx-head">
+        <div class="fx-ic">🎙️</div>
+        <div class="fx-title">
+          <h3>通道 B · 语音转文字</h3>
+          <span class="fx-pill">语音输入</span>
+        </div>
+      </div>
+      <div class="fx-big muted" id="bLine">（对麦克风说话后这里出文字）</div>
+      <div class="fx-sub"><span id="bTime"></span></div>
+    </div>
+  </div>
+
+  <!-- ===== 中部: 事件流 + 终端控制 ===== -->
+  <div class="fx-grid">
+    <div class="fx-card fx-feed">
+      <div class="fx-head">
+        <div class="fx-ic sm">📡</div>
+        <div class="fx-title"><h3>实时事件流</h3></div>
+        <span class="fx-pill dim" id="cnt"></span>
+      </div>
+      <div class="fx-scroll">
+        <table>
+          <thead><tr><th>通道</th><th>内容</th><th>置信度</th><th>终端</th><th>时间</th></tr></thead>
+          <tbody id="feed"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="fx-card fx-side">
+      <div class="fx-head">
+        <div class="fx-ic sm">🖥️</div>
+        <div class="fx-title"><h3>终端控制（ESP32 · TFT）</h3></div>
+      </div>
+
+      <!-- TFT 仿真小屏幕 -->
+      <div class="fx-screen">
+        <div class="fx-screen-bar"><i></i><i></i><i></i><span>TFT</span></div>
+        <div class="fx-screen-body">
+          <div class="line s"><label>手语区</label><span id="tS">（空）</span></div>
+          <div class="line v"><label>语音区</label><span id="tV">（空）</span></div>
+        </div>
+      </div>
+
+      <div class="row">
+        <label>推送模式</label>
+        <div class="seg">
+          <button id="mAuto" onclick="setMode('auto')">自动推送</button>
+          <button id="mSingle" onclick="setMode('single')">单句推送</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>屏幕</label>
+        <button class="btn gray" id="lockBtn" onclick="toggleLock()">锁屏</button>
+        <button class="btn gray" onclick="termClear()">清屏</button>
+      </div>
+      <div class="row">
+        <label>手动下发</label>
+        <input type="text" id="manual" placeholder="输入文字，发送到 TFT 屏幕" maxlength="40">
+        <button class="btn" onclick="termSend()">发送</button>
+      </div>
+      <div class="row">
+        <label>置信阈值</label>
+        <input type="number" id="th" step="0.05" min="0" max="1" style="flex:0 0 90px">
+        <button class="btn gray" onclick="saveTh()">保存阈值</button>
+      </div>
+      <div class="fx-sub single">低于阈值的手语词只显示在这里，不推送到 TFT。</div>
+    </div>
+  </div>
+
+  <!-- ===== 使用提示 ===== -->
+  <div class="fx-card fx-steps">
+    <div class="fx-head">
+      <div class="fx-ic sm">🧭</div>
+      <div class="fx-title"><h3>快速上手</h3></div>
+    </div>
+    <div class="fx-step-list">
+      <div class="fx-step"><b>1</b><span>开桌面软件（或 1.py 识别端）</span></div>
+      <div class="fx-step"><b>2</b><span>再开 web\app.py（本页后端）</span></div>
+      <div class="fx-step"><b>3</b><span>再开 web\bridge_mqtt.py（数据桥）</span></div>
+      <div class="fx-step"><b>4</b><span>ESP32 烧录 web\esp32 固件并上电</span></div>
+    </div>
+    <div class="fx-note">自动推送 = 识别到就上 TFT；单句推送 = 只接受本页手动发送。</div>
+  </div>
+
+</div>
+{% endblock %}
+{% block script %}
+let lastVer = -1, lastLocked = null, lastMode = null;
+function fmt(r){
+  return (r && r.ts) ? r.ts.slice(11) : "—";
+}
+async function tick(){
+  try{
+    const s = await (await fetch("/api/state")).json();
+    document.getElementById("net").classList.remove("off");
+    // 通道A
+    const aLine = document.getElementById("aLine");
+    fxPopText(aLine, s.sign_line || "（等待比划…）");
+    aLine.classList.toggle("muted", !s.sign_line);
+    const ls = s.last_sign;
+    if(ls){
+      document.getElementById("aWord").textContent = "最近词：" + (ls.word || "—");
+      const sc = ls.score;
+      if(sc !== null && sc !== undefined){
+        const pct = Math.round(sc * 100);
+        const bar = document.getElementById("aBar");
+        bar.style.width = pct + "%";
+        bar.className = (sc < s.conf.threshold) ? "low" : "";
+        document.getElementById("aScore").textContent = "置信度 " + pct + "%（阈值 " + Math.round(s.conf.threshold*100) + "%）";
+      }
+      document.getElementById("aDetail").textContent = (ls.hand || "") + (ls.dist !== null ? " · 距离 " + ls.dist : "") + " · " + fmt(ls);
+      document.getElementById("aBlocked").innerHTML = ls.blocked ? '<span class="blocked-tag">低于阈值 · 已拦截未上屏</span>' : "";
+    }
+    const live = s.sign_line;
+    document.getElementById("aState").textContent = live ? "识别中" : "等待识别";
+    document.getElementById("aState").className = "fx-pill " + (live ? "ok" : "");
+    document.getElementById("aLive").className = "fx-live " + (live ? "on" : "");
+    document.getElementById("aLive").innerHTML = live ? "<i></i>识别中" : "<i></i>待机";
+    // 通道B
+    const bLine = document.getElementById("bLine");
+    fxPopText(bLine, s.voice_text || "（等待说话…）");
+    bLine.classList.toggle("muted", !s.voice_text);
+    document.getElementById("bTime").textContent = s.last_voice ? "最近一条 " + fmt(s.last_voice) : "";
+    // 事件流
+    const feed = document.getElementById("feed");
+    feed.innerHTML = s.recent.map(r =>
+      `<tr class="${r.type}${r.blocked ? ' blocked' : ''}">
+        <td>${r.type === 'sign' ? '手语' : '语音'}</td>
+        <td>${r.text || ''}</td>
+        <td class="num">${r.score !== null && r.score !== undefined ? Math.round(r.score*100) + '%' : '—'}</td>
+        <td>${r.blocked ? '拦截' : (r.type === 'sign' ? '已推' : '已推')}</td>
+        <td class="num">${r.ts}</td></tr>`).join("");
+    document.getElementById("cnt").textContent = "最近 " + s.recent.length + " 条";
+    // 终端
+    document.getElementById("tS").textContent = s.terminal.sign || "（空）";
+    document.getElementById("tV").textContent = s.terminal.voice || "（空）";
+    // 控制状态只在变化时改按钮, 避免打断输入
+    if(lastLocked !== s.conf.locked){
+      lastLocked = s.conf.locked;
+      const lb = document.getElementById("lockBtn");
+      lb.textContent = s.conf.locked ? "解锁屏幕" : "锁屏";
+      lb.className = s.conf.locked ? "btn warn" : "btn gray";
+    }
+    if(lastMode !== s.conf.mode){
+      lastMode = s.conf.mode;
+      document.getElementById("mAuto").className = s.conf.mode === "auto" ? "on" : "";
+      document.getElementById("mSingle").className = s.conf.mode === "single" ? "on" : "";
+    }
+    const th = document.getElementById("th");
+    if(document.activeElement !== th && th.value === "") th.value = s.conf.threshold;
+  }catch(e){
+    document.getElementById("net").classList.add("off");
+  }
+}
+async function post(url, body){
+  const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body||{})});
+  const j = await r.json();
+  if(!j.ok && j.msg) alert(j.msg);
+  return j;
+}
+function setMode(m){ post("/api/terminal/mode", {mode: m}); }
+function toggleLock(){ post("/api/terminal/lock", {locked: !lastLocked}); }
+function termClear(){ post("/api/terminal/clear", {target: "both"}); }
+function termSend(){
+  const i = document.getElementById("manual");
+  if(!i.value.trim()) return;
+  post("/api/terminal/send", {text: i.value.trim(), target: "sign"}).then(j => { if(j.ok) i.value = ""; });
+}
+function saveTh(){
+  const v = parseFloat(document.getElementById("th").value);
+  if(isNaN(v)) return;
+  post("/api/config", {threshold: v});
+}
+document.getElementById("manual").addEventListener("keydown", e => { if(e.key === "Enter") termSend(); });
+tick(); setInterval(tick, 1000);
+{% endblock %}

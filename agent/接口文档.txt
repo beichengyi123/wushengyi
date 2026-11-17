@@ -1,0 +1,121 @@
+======================================================================
+ 无声有译 · 接口文档（智能体服务 + 网站新增接口）
+ 版本: v1.0   日期: 2026-11-07   适配: 竞赛演示
+======================================================================
+
+一、整体链路
+----------------------------------------------------------------------
+  电脑 GUI 软件 ─┬─ 分支1 ─> Flask 网站(5000) ─> ESP32 轮询上屏
+                 └─ 分支2 ─> 智能体服务(8080) ─> DeepSeek ─> 润色句子
+                                    │
+                                    └──> 回调 Flask /api/agent_record 落库(SQLite)
+
+  职责边界:
+    · 图像识别只在电脑端完成, 智能体不参与识别
+    · DeepSeek 密钥只存在智能体服务(agent/src/main/resources/application.yml)
+    · ESP32 与桌面软件都不直接访问 DeepSeek
+    · 网站原表 records 结构与写入逻辑未改动(仅新增一个可空列 tag)
+
+二、智能体服务接口（SpringBoot, 默认 8080）
+----------------------------------------------------------------------
+
+【1】合成句子
+  POST http://127.0.0.1:8080/api/agent/compose
+  Content-Type: application/json
+
+  请求体:
+  {
+    "words": ["我", "要", "去", "学校"],        // 必填: 手语离散词
+    "raw":   "我 要 去 学校",                    // 可选: 只传这个也行(按空格/逗号拆)
+    "image": "snapshots/20261107_2210_学校.jpg", // 可选: 抓拍图相对路径
+    "ts":    "2026-11-07 22:10:31"               // 可选: 不传由服务端补
+  }
+
+  成功响应(200):
+  {
+    "valid": true,
+    "text": "我要去学校。",
+    "tag": "陈述",              // 陈述 / 询问 / 问候
+    "error": null,
+    "elapsedMs": 843
+  }
+
+  判定无效(词汇杂乱, 200):
+  { "valid": false, "text": "", "tag": "", "error": null, "elapsedMs": 612 }
+
+  异常响应(200, 用 error 标识, 不抛 500):
+  { "valid": false, "text": "", "tag": "", "error": "TIMEOUT", "elapsedMs": 20001 }
+
+  error 取值:
+    TIMEOUT        调用 DeepSeek 超时(默认 20 秒)
+    UPSTREAM_ERROR 接口报错 / 返回内容无法解析
+    EMPTY_INPUT    没收到任何词汇
+    KEY_MISSING    服务端没配置密钥
+
+【2】探活
+  GET http://127.0.0.1:8080/api/agent/health
+  -> {"status":"UP","service":"wusheng-agent","model":"deepseek-chat"}
+
+三、网站(Flask, 默认 5000)本次新增接口
+----------------------------------------------------------------------
+
+【1】抓拍图上传（GUI 用）
+  POST http://127.0.0.1:5000/api/snapshot
+  Content-Type: multipart/form-data
+  表单: file=<jpg 文件>, word=<词>, ts=<时间戳>
+  响应: {"ok":true, "path":"snapshots/20261107_2210_学校.jpg", "name":"..."}
+  说明: 文件存到 web/static/snapshots/, 网页可直接用 <img src="/static/snapshots/..."> 访问
+
+【2】智能体结果落库（智能体服务回调）
+  POST http://127.0.0.1:5000/api/agent_record
+  Content-Type: application/json
+  {
+    "words": ["我","要","去","学校"],
+    "text":  "我要去学校。",
+    "tag":   "陈述",
+    "image": "snapshots/xxx.jpg",
+    "ts":    "2026-11-07 22:10:31"
+  }
+  响应: {"ok": true}
+  字段映射(复用原表 type='sign'):
+    word=润色句子  sentence=原始词汇  text=润色句子  tag=标签  image=抓拍图
+
+  说明: 这是"沿用原有存储逻辑"的做法 —— 智能体不直接连 SQLite,
+        统一走 Flask 的写入入口, 时间戳/事务/表结构仍由一处负责。
+
+四、命令行自测（复制即用）
+----------------------------------------------------------------------
+  1) 探活(Windows cmd):
+     curl http://127.0.0.1:8080/api/agent/health
+
+  2) 合成一句话(Windows PowerShell 里中文用下面写法最稳):
+     curl.exe -X POST http://127.0.0.1:8080/api/agent/compose -H "Content-Type: application/json" -d "{\"words\":[\"wo\",\"yao\",\"qu\",\"xuexiao\"]}"
+
+  3) 用 Python 测(推荐, 不会被命令行转义坑):
+     D:\python\python.exe -c "import json,urllib.request; d=json.dumps({'words':['我','要','去','学校']},ensure_ascii=False).encode(); r=urllib.request.Request('http://127.0.0.1:8080/api/agent/compose',data=d,headers={'Content-Type':'application/json'}); print(urllib.request.urlopen(r,timeout=30).read().decode())"
+
+五、排错
+----------------------------------------------------------------------
+  现象                              原因 / 处理
+  --------------------------------- ------------------------------------
+  桌面软件右上角"智能体离线"        start_agent.bat 没开, 或 8080 被占用
+  返回 KEY_MISSING                  application.yml 里 api-key 为空
+  返回 TIMEOUT                      网络不稳 / 服务商限流; 可把
+                                    timeout-seconds 调大到 30
+  HTTP 500 / 启动即退出             看智能体窗口的红色堆栈;
+                                    多半是 yml 缩进或端口冲突
+  句子已返回但历史页没有记录        网站(Flask)没开, 或 backend-url 写错;
+                                    看智能体日志 "落库失败/落库请求异常"
+  ESP32 不显示润色句子              检查 GUI 里 push_polished_to_tft 是否为 true,
+                                    以及板子是否连着同一个热点
+
+六、端口与启动顺序
+----------------------------------------------------------------------
+  顺序: 1) 网站 Flask(app.py, 5000)
+        2) 智能体服务(start_agent.bat, 8080)
+        3) 桌面软件(无声有译.exe 或 gui_app.py)
+        4) ESP32 上电(轮询 5000)
+  端口冲突时改: agent/src/main/resources/application.yml 的 server.port
+                与 gui/config.json 里 agent 地址保持一致
+
+======================================================================

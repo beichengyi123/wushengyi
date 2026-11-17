@@ -1,0 +1,973 @@
+{% extends "base.html" %}
+{% block title %}样本采集{% endblock %}
+
+{% block body %}
+<style>
+  /* 采集页专用样式（不改进原有 style.css，避免影响其它页面） */
+  .cg { display: grid; grid-template-columns: 1.35fr 1fr; gap: 16px; }
+  @media (max-width: 980px) { .cg { grid-template-columns: 1fr; } }
+  .camwrap { position: relative; background: #060b13; border: 1px solid #1e2c40;
+             border-radius: 12px; overflow: hidden; aspect-ratio: 4 / 3; }
+  .camwrap video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+  /* 手部骨架叠加层：探测接口每 0.4 秒刷一次 */
+  #overlay { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 4; pointer-events: none; }
+  .camwrap .live { position: absolute; top: 10px; left: 10px; z-index: 5; max-width: 70%;
+                   font-size: 12px; line-height: 1.5; padding: 5px 10px; border-radius: 7px;
+                   background: rgba(6,11,19,.72); border: 1px solid #24344d; color: #9fb0c5; }
+  .camwrap .live b { color: #4ade80; }
+  .camwrap .live .warn { color: #fbbf24; }
+  .camwrap .live .bad { color: #f87171; }
+  .camwrap .hint { position: absolute; left: 10px; bottom: 10px; font-size: 12px;
+                   background: rgba(6,11,19,.72); border: 1px solid #24344d; border-radius: 7px;
+                   padding: 4px 10px; color: #9fb0c5; }
+  .camwrap .rec { position: absolute; top: 10px; right: 10px; display: none;
+                  align-items: center; gap: 6px; font-size: 12px; color: #fff;
+                  background: rgba(239,68,68,.85); border-radius: 7px; padding: 4px 10px; }
+  .camwrap.recording .rec { display: flex; }
+  .camwrap .rec i { width: 8px; height: 8px; border-radius: 50%; background: #fff;
+                    animation: blink .8s infinite; }
+  @keyframes blink { 50% { opacity: .2; } }
+  /* 3-2-1 倒计时大字 */
+  .camwrap .count { position: absolute; inset: 0; display: none; align-items: center;
+                    justify-content: center; z-index: 6; pointer-events: none;
+                    font-size: 120px; font-weight: 800; color: #22d3ee; line-height: 1;
+                    text-shadow: 0 0 40px rgba(34,211,238,.55), 0 4px 20px rgba(0,0,0,.6); }
+  .camwrap .count.on { display: flex; animation: pop .4s ease-out; }
+  .camwrap .count small { font-size: 15px; font-weight: 400; color: #dbe4ee; margin-left: 12px; }
+  @keyframes pop { from { transform: scale(1.35); opacity: .2; } to { transform: scale(1); opacity: 1; } }
+  /* 上传/推理中的遮罩 */
+  .camwrap .mask { position: absolute; inset: 0; display: none; z-index: 7;
+                   align-items: center; justify-content: center; flex-direction: column; gap: 12px;
+                   background: rgba(6,11,19,.78); color: #dbe4ee; font-size: 14px; }
+  .camwrap .mask.on { display: flex; }
+  .camwrap .mask .sp { width: 34px; height: 34px; border-radius: 50%;
+                       border: 3px solid #1e3a4d; border-top-color: #22d3ee;
+                       animation: spin .9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress { height: 8px; background: #1b2a40; border-radius: 99px; overflow: hidden; margin: 10px 0 2px; }
+  .progress i { display: block; height: 100%; width: 0; background: #22d3ee; transition: width .1s linear; }
+  .progress.live { height: 12px; }
+  .progress.live i { background: linear-gradient(90deg, #22d3ee, #4ade80); }
+  .rule { font-size: 13px; color: #9fb0c5; }
+  .rule b { color: #fde047; font-size: 14px; }
+  .rule .warn { color: #f87171; }
+  .thumbgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(108px, 1fr)); gap: 10px; }
+  .thumb { position: relative; border: 1px solid #1e2c40; border-radius: 10px; overflow: hidden;
+           background: #0a111c; }
+  .thumb img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; }
+  .thumb .m { padding: 6px 8px; font-size: 11px; color: #7d8ea5; line-height: 1.5; }
+  .thumb .del { position: absolute; top: 4px; right: 4px; background: rgba(6,11,19,.8);
+                border: 1px solid #7f1d1d; color: #f87171; border-radius: 6px; cursor: pointer;
+                font-size: 11px; padding: 2px 6px; }
+  .verdict { border-radius: 12px; padding: 14px 16px; margin-top: 6px; border: 1px solid #24344d; }
+  .verdict.pass { border-color: #14532d; background: #0b2018; }
+  .verdict.fail { border-color: #7f1d1d; background: #210f12; }
+  .verdict h4 { font-size: 15px; margin-bottom: 8px; }
+  .verdict.pass h4 { color: #4ade80; }
+  .verdict.fail h4 { color: #f87171; }
+  .verdict p { font-size: 13px; color: #c8d4e2; line-height: 1.75; }
+  .verdict .adv { margin-top: 10px; font-size: 13px; color: #9fb0c5; line-height: 1.8; }
+  .stat { display: flex; gap: 18px; flex-wrap: wrap; font-size: 12px; color: #7d8ea5; margin: 8px 0; }
+  .stat b { color: #dbe4ee; font-size: 15px; }
+  .newlabel { border: 1px dashed #24344d; border-radius: 10px; padding: 12px; margin-top: 10px; display: none; }
+  .newlabel.on { display: block; }
+  .mini { font-size: 12px; color: #7d8ea5; line-height: 1.7; margin-top: 8px; }
+  .toast { position: fixed; right: 20px; bottom: 20px; max-width: 380px; z-index: 20;
+           background: #111c2c; border: 1px solid #24344d; border-left: 4px solid #22d3ee;
+           border-radius: 10px; padding: 12px 16px; font-size: 13px; line-height: 1.7;
+           box-shadow: 0 10px 30px rgba(0,0,0,.45); display: none; }
+  .toast.err { border-left-color: #ef4444; }
+  .toast.ok { border-left-color: #4ade80; }
+  table.det { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+  table.det th, table.det td { padding: 5px 8px; border-bottom: 1px solid #1a2637; text-align: left; }
+  table.det th { color: #7d8ea5; font-weight: 400; }
+  .yes { color: #4ade80; } .no { color: #f87171; }
+</style>
+
+<div class="card">
+  <h3>手语样本采集 <span class="tag">待考核库 / 正式动作库</span></h3>
+  <div id="secureTip" style="display:none;background:#2a1f0b;border:1px solid #7a5a12;
+       border-left:4px solid #fbbf24;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+    <div style="color:#fbbf24;font-size:13px;font-weight:600" id="secureTitle">当前地址不能调用摄像头</div>
+    <div class="mini" style="color:#d6c7a4" id="secureWhy"></div>
+    <div style="margin-top:10px"><a class="btn" id="secureGo" style="display:none;text-decoration:none">→ 用本机地址打开本页</a></div>
+  </div>
+
+  <div class="cg">
+    <!-- 左：摄像头 -->
+    <div>
+      <div class="camwrap" id="camWrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <div class="live" id="liveState">正在探测手部…</div>
+        <div class="count" id="countdown"></div>
+        <div class="mask" id="mask"><div class="sp"></div><div id="maskTxt">正在识别手部关键点…</div></div>
+        <div class="rec"><i></i><span id="recTxt">采集中…</span></div>
+        <div class="hint" id="camHint">等待摄像头…</div>
+        <button id="btnRetry" class="btn" style="display:none;position:absolute;left:50%;
+                transform:translateX(-50%);bottom:16px;z-index:5">↻ 重试摄像头</button>
+      </div>
+      <div class="progress" id="progWrap"><i id="bar"></i></div>
+      <div class="mini" id="capMsg">选好标签后按“采集一条”（或空格键）：3 秒倒计时后把手举进画面就自动开录，做完动作停一下自动结束。采集中途按按钮可取消。</div>
+    </div>
+
+    <!-- 右：标签与操作 -->
+    <div>
+      <div class="row">
+        <label>手语标签</label>
+        <select id="labelSel" style="flex:1;background:#0d1420;border:1px solid #24344d;
+                color:#fff;border-radius:9px;padding:9px 12px;font-size:14px"></select>
+      </div>
+      <div class="rule" id="ruleText">选择标签后这里显示它登记的手位规则。</div>
+
+      <div class="row">
+        <button class="btn" id="btnCap" disabled>● 采集一条</button>
+        <button class="btn gray" id="btnNewLabel">+ 新增标签</button>
+      </div>
+
+      <div class="newlabel" id="newLabelBox">
+        <div class="row" style="margin-top:0">
+          <label>新标签</label>
+          <input type="text" id="newLabelName" maxlength="12" placeholder="例如：宿舍 / 老师 / 图书馆">
+        </div>
+        <div class="row">
+          <label>手位规则</label>
+          <select id="newLabelHand" style="flex:1;background:#0d1420;border:1px solid #24344d;
+                  color:#fff;border-radius:9px;padding:9px 12px;font-size:14px">
+            <option value="none">无手位限制（任一只手都行）</option>
+            <option value="right">右手手势（必须用右手）</option>
+            <option value="left">左手手势（必须用左手）</option>
+          </select>
+        </div>
+        <div class="mini">手位用来区分外形相近、容易混淆的动作（比如“好”和“谢谢”）。
+          选定后，采集和自检都会按这个手位把关。</div>
+        <div class="row">
+          <button class="btn" id="btnCreate">创建标签</button>
+          <button class="btn gray" id="btnCancelNew">取消</button>
+        </div>
+      </div>
+
+      <div class="stat" id="statBox">
+        <div>待考核 <b id="nPending">0</b> 条</div>
+        <div>正式库 <b id="nFormal">0</b> 条</div>
+        <div>手位 <b id="handNow">—</b></div>
+      </div>
+
+      <div class="row">
+        <button class="btn gray" id="btnCheck" disabled>🔍 开始 AI 自检考核</button>
+        <button class="btn warn" id="btnClear" disabled>清空待考核</button>
+      </div>
+      <div class="mini">自检只用本机的识别模型 + 手位规则，不联网、不调用任何外部接口。
+        不需要你填准确率门槛，结论由系统给。</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>待考核样本 <span class="tag" id="samTag">0 条</span></h3>
+  <div class="thumbgrid" id="thumbs"></div>
+  <div class="mini" id="emptyTip">还没有样本。选好标签后按“采集一条”，同一个人同一个动作多录几条（5 条以上才有统计意义）。</div>
+</div>
+
+<div class="card" id="resultCard" style="display:none">
+  <h3>AI 自检结论</h3>
+  <div id="verdictBox"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+{% endblock %}
+
+{% block script %}
+const video = document.getElementById('video');
+const camWrap = document.getElementById('camWrap');
+const bar = document.getElementById('bar');
+const camHint = document.getElementById('camHint');
+const capMsg = document.getElementById('capMsg');
+const labelSel = document.getElementById('labelSel');
+const ruleText = document.getElementById('ruleText');
+const btnCap = document.getElementById('btnCap');
+const btnCheck = document.getElementById('btnCheck');
+const btnClear = document.getElementById('btnClear');
+const thumbs = document.getElementById('thumbs');
+const toastEl = document.getElementById('toast');
+const countEl = document.getElementById('countdown');
+const maskEl = document.getElementById('mask');
+const maskTxt = document.getElementById('maskTxt');
+const progWrap = document.getElementById('progWrap');
+
+let labels = [];
+let rules = {};
+let recording = false;
+let openCamTries = 0;   // 摄像头被占时的自动重试计数(桌面软件释放摄像头要1~2秒)
+let counting = false;      // 倒计时中
+let uploading = false;     // 上传/后端提特征中
+let lastVerdict = null;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const busy = () => recording || counting || uploading;
+
+const HAND = {right: '右手', left: '左手', none: '无手位限制'};
+
+/* 浏览器规则：只有 本机(127.0.0.1/localhost) 或 https 页面才允许开摄像头。
+   非本机打开(手机扫码/局域网IP) -> 进入【围观模式】:
+   不能操作, 但实时同步观看电脑端采集画面(直播), 适合演示答辩时评委用手机围观 */
+const host = location.hostname;
+const isLocal = ['127.0.0.1', 'localhost', '::1', '[::1]'].includes(host);
+const isPhone = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+if (!isLocal) {
+  /* ---------- 围观模式 ---------- */
+  // 顶部提示条
+  const tip = document.getElementById('secureTip');
+  tip.style.display = 'block';
+  tip.style.background = '#0b2018';
+  tip.style.border = '1px solid #14532d';
+  tip.style.borderLeft = '4px solid #4ade80';
+  document.getElementById('secureTitle').innerHTML =
+    '📺 围观模式 —— 同步观看电脑端采集直播';
+  document.getElementById('secureTitle').style.color = '#4ade80';
+  document.getElementById('secureWhy').innerHTML =
+    '你正在用 <b>' + location.host + '</b> 围观。电脑上打开采集页开始采集后，' +
+    '这里的画面会实时同步（摄像头画面、手部骨架、倒计时、录制进度）。' +
+    '围观只看不操作，不影响电脑端采集。';
+
+  // DOM 改造: 只留直播画面, 隐藏操作区
+  document.querySelector('.cg').style.gridTemplateColumns = '1fr';
+  document.querySelector('.cg > div:last-child').style.display = 'none';
+  document.getElementById('camHint').textContent = '围观直播 · 画面来自电脑端摄像头';
+  document.getElementById('liveState').style.display = 'none';
+  document.getElementById('mask').style.display = 'none';
+  document.getElementById('btnRetry').style.display = 'none';
+  document.querySelector('.camwrap .rec').style.display = 'none';
+  // video 换成直播 img
+  video.style.display = 'none';
+  const mImg = document.createElement('img');
+  mImg.id = 'mirrorImg';
+  mImg.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;';
+  camWrap.insertBefore(mImg, video);
+  document.getElementById('overlay').style.display = 'none';
+
+  // 状态条
+  const mStat = document.createElement('div');
+  mStat.id = 'mirrorStat';
+  mStat.style.cssText = 'margin-top:10px;border:1px solid #1e2c40;border-radius:10px;' +
+    'padding:10px 14px;font-size:14px;line-height:1.9;color:#b6c5d9;background:rgba(11,18,32,.55)';
+  mStat.innerHTML = '<b style="color:#4ade80">● 直播等待中</b> —— 电脑端还没开始推画面';
+  document.getElementById('capMsg').replaceWith(mStat);
+  document.getElementById('progWrap').style.display = 'none';
+
+  // 下方卡片隐藏(围观只看直播)
+  const cards = document.querySelectorAll('main .card');
+  for (let i = 1; i < cards.length; i++) cards[i].style.display = 'none';
+
+  const PHASE_TXT = {
+    idle: '待机中', count: '⏱ 准备动作', rec: '● 录制样本中',
+    up: '⏳ 后端提特征中', check: '🔍 AI 自检考核中'
+  };
+  function renderMirrorState(j) {
+    const s = j.state || {};
+    if (!j.live) {
+      mStat.innerHTML = '<b style="color:#fbbf24">● 直播已暂停</b> —— 电脑端采集页关掉了或切到后台，等它回来画面会自动继续';
+      return;
+    }
+    let line = '<b style="color:#4ade80">● 直播中</b>';
+    if (s.label) line += ' · 标签 <b style="color:#fde047">' + s.label + '</b>';
+    if (s.phase && PHASE_TXT[s.phase]) line += ' · ' + PHASE_TXT[s.phase];
+    if (s.pending !== undefined && s.formal !== undefined)
+      line += ' · 待考核 ' + s.pending + ' 条 / 正式库 ' + s.formal + ' 条';
+    mStat.innerHTML = line + (s.msg ? '<br><span style="color:#7d8ea5;font-size:13px">' + s.msg + '</span>' : '');
+  }
+
+  (async function viewLoop() {
+    // 状态: 1.5s 一次; 画面: 400ms 一帧(img 轮询, 微信内置浏览器兼容)
+    setInterval(async () => {
+      try { renderMirrorState(await api('/api/collect/mirror/state')); } catch (e) {}
+    }, 1500);
+    setInterval(() => {
+      if (document.hidden) return;
+      const t = Date.now();
+      const probe = new Image();
+      probe.onload = () => { mImg.src = probe.src; };
+      probe.src = '/api/collect/mirror/frame?t=' + t;
+    }, 400);
+    try { renderMirrorState(await api('/api/collect/mirror/state')); } catch (e) {}
+  })();
+}
+
+function toast(msg, kind) {
+  toastEl.textContent = msg;
+  toastEl.className = 'toast ' + (kind || '');
+  toastEl.style.display = 'block';
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => { toastEl.style.display = 'none'; }, 4200);
+}
+
+async function api(url, opt) {
+  const r = await fetch(url, Object.assign({headers: {'Content-Type': 'application/json'}}, opt || {}));
+  let j = null;
+  try { j = await r.json(); } catch (e) { j = {ok: false, msg: '服务器返回异常(' + r.status + ')'}; }
+  if (!r.ok || j.ok === false) throw new Error(j.msg || ('请求失败 ' + r.status));
+  return j;
+}
+
+/* ---------------- 摄像头 ---------------- */
+async function openCam() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {width: {ideal: 640}, height: {ideal: 480}, facingMode: 'user'}, audio: false
+    });
+    video.srcObject = stream;
+    camHint.textContent = '摄像头已就绪 · 画面已镜像（和识别程序同一方向）';
+    camHint.style.color = '';
+    btnRetry.style.display = 'none';
+    openCamTries = 0;
+    startProbe();
+    startMirror();     // 开始直播推流, 手机围观端从此能看到画面
+    // 容器比例跟随摄像头原生比例: 否则 cover 裁剪会让骨架和手对不齐
+    const fit = () => {
+      if (video.videoWidth) camWrap.style.aspectRatio = video.videoWidth + ' / ' + video.videoHeight;
+    };
+    if (video.videoWidth) fit();
+    else video.addEventListener('loadedmetadata', fit, { once: true });
+  } catch (e) {
+    const n = (e && e.name) || '';
+    let why = e.message;
+    if (!window.isSecureContext || n === 'SecurityError') {
+      why = '当前地址不允许开摄像头（见上方黄色提示）';
+    } else if (n === 'NotReadableError' || n === 'TrackStartError' || n === 'AbortError') {
+      // 大概率是桌面软件正在释放摄像头(它检测到本页打开会自动让出), 自动等2秒重试
+      if (openCamTries < 3) {
+        openCamTries++;
+        camHint.textContent = '桌面软件正在释放摄像头，稍等…（自动重试 ' + openCamTries + '/3）';
+        camHint.style.color = '';
+        setTimeout(openCam, 2000);
+        return;
+      }
+      why = '摄像头被别的程序占用了 —— 如果不是桌面软件「无声有译」，请关掉占用摄像头的程序再点“重试摄像头”';
+    } else if (n === 'NotAllowedError' || n === 'PermissionDeniedError') {
+      why = '浏览器拒绝了摄像头权限 —— 点地址栏左边的锁/摄像头图标，选“允许”，然后刷新页面';
+    } else if (n === 'NotFoundError' || n === 'DevicesNotFoundError') {
+      why = '没找到摄像头 —— 检查摄像头是否插好、设备管理器里是否被禁用';
+    }
+    camHint.textContent = '摄像头打不开：' + why;
+    camHint.style.color = '#fbbf24';
+    btnRetry.style.display = 'inline-block';
+  }
+}
+btnRetry.addEventListener('click', () => { camHint.textContent = '正在重试…'; openCam(); });
+
+/* ---------------- 标签 ---------------- */
+async function loadLabels(keep) {
+  const j = await api('/api/collect/labels');
+  labels = j.labels; rules = j.rules;
+  const cur = keep || labelSel.value;
+  labelSel.innerHTML = '';
+  labels.forEach(l => {
+    const o = document.createElement('option');
+    o.value = l.label;
+    o.textContent = `${l.label}　·　${HAND[l.hand] || l.hand}　·　待${l.pending}/正式${l.formal}`;
+    labelSel.appendChild(o);
+  });
+  if (cur && labels.some(l => l.label === cur)) labelSel.value = cur;
+  refreshLabel();
+}
+
+function curLabel() { return labels.find(l => l.label === labelSel.value); }
+
+function refreshLabel() {
+  const l = curLabel();
+  const has = !!l;
+  btnCap.disabled = !has || busy();
+  btnCheck.disabled = !has || busy() || (l.pending < 1);
+  btnClear.disabled = !has || busy() || (l.pending < 1);
+  if (!has) {
+    ruleText.textContent = '还没有标签，先点“新增标签”。';
+    document.getElementById('nPending').textContent = '0';
+    document.getElementById('nFormal').textContent = '0';
+    document.getElementById('handNow').textContent = '—';
+    document.getElementById('samTag').textContent = '0 条';
+    thumbs.innerHTML = '';
+    return;
+  }
+  const h = HAND[l.hand] || l.hand;
+  ruleText.innerHTML = l.hand === 'none'
+    ? `本标签：<b>无手位限制</b> · 左右手都可以`
+    : `本标签：<b>${h}</b> <span class="warn">（采集时必须用${h}）</span>`;
+  document.getElementById('nPending').textContent = l.pending;
+  document.getElementById('nFormal').textContent = l.formal;
+  document.getElementById('handNow').textContent = h;
+  loadSamples();
+}
+
+/* ---------------- 采集 ---------------- */
+const capCanvas = document.createElement('canvas');
+capCanvas.width = 640; capCanvas.height = 480;
+const capCtx = capCanvas.getContext('2d');
+
+/* ---------------- 实时骨架探测（每 0.4 秒一帧小图，后端返回 21 点坐标） ---------------- */
+const overlay = document.getElementById('overlay');
+const octx = overlay.getContext('2d');
+const liveState = document.getElementById('liveState');
+const probeCanvas = document.createElement('canvas');
+const probeCtx = probeCanvas.getContext('2d');
+let probeOn = false, probeBusy = false, probeStop = false;
+let lastHands = null;      // 最近一次探测结果(推流帧上画骨架用)
+let lastProbeAt = 0;       // 最近一次探测成功的时间(起手门控判断数据是否新鲜)
+
+const BONES = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],
+               [9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+
+function drawHands(res) {
+  const w = video.videoWidth || 640, h = video.videoHeight || 480;
+  // 改 canvas 尺寸会清空内容, 尺寸没变就只清屏 -> 骨架不会闪
+  if (overlay.width !== w || overlay.height !== h) {
+    overlay.width = w; overlay.height = h;
+  } else {
+    octx.clearRect(0, 0, w, h);
+  }
+  const one = (pts, color) => {
+    if (!pts) return;
+    // 坐标系说明: 发给后端的探测帧已经按"屏幕显示方向"镜像过了,
+    // 后端返回的坐标就是你在屏幕上看到的方位, 直接映射即可。
+    // (之前在这里又翻了一次 x, 双重镜像导致骨架左右反、和真手对不上)
+    const X = p => p[0] * w, Y = p => p[1] * h;
+    octx.strokeStyle = color; octx.lineWidth = Math.max(2, w / 240); octx.lineCap = 'round';
+    for (const [a, b] of BONES) {
+      octx.beginPath(); octx.moveTo(X(pts[a]), Y(pts[a])); octx.lineTo(X(pts[b]), Y(pts[b])); octx.stroke();
+    }
+    octx.fillStyle = '#fff';
+    for (const p of pts) {
+      octx.beginPath(); octx.arc(X(p), Y(p), Math.max(2.5, w / 220), 0, 6.284); octx.fill();
+    }
+  };
+  one(res.right, 'rgba(34,211,238,.95)');   // 右手: 青色
+  one(res.left, 'rgba(251,191,36,.95)');    // 左手: 黄色
+}
+
+function liveMsg(res) {
+  const hasR = !!res.right, hasL = !!res.left;
+  const faceDrop = (res.dropped || []).some(x => x.why === 'inside_face');
+  let html;
+  if (hasR || hasL) {
+    html = '<b>✋ 已识别: ' + (hasR && hasL ? '双手' : (hasR ? '右手' : '左手')) + '</b>';
+    if (res.weak) html += ' · <span class="warn">手不太清晰，靠近一点/亮一点更稳</span>';
+    else if (res.bright < 45) html += ' · <span class="warn">画面偏暗，光线好识别更稳</span>';
+  } else if (faceDrop) {
+    html = '<span class="warn">手贴脸太近，被防误检过滤了 —— 往画面中间、下巴以下放</span>';
+  } else {
+    html = '<span class="bad">没有检测到手 —— 把手举到画面里，手掌朝镜头</span>';
+  }
+  liveState.innerHTML = html;
+}
+
+async function probeLoop() {
+  while (!probeStop) {
+    // 倒计时/等手/录制中都要快(等手反应灵敏, 用户手一进来马上开录), 平时慢一点省资源
+    await sleep(recording || counting ? 260 : 450);
+    if (probeStop) break;
+    // 只有"上传提特征"时才让路——那几秒后端在批量提特征占着。
+    // 录制中必须继续探测：以前这里用 busy() 把录制也挡了，
+    // 结果一开始采集骨架就整个消失，看着像识别坏了。
+    if (probeBusy || uploading || !video.videoWidth) continue;
+    probeBusy = true;
+    try {
+      const vw = video.videoWidth, vh = video.videoHeight;
+      const pw = 400, ph = Math.max(1, Math.round(400 * vh / vw));   // 400px: 太小 MediaPipe 认不出稍远的手
+      probeCanvas.width = pw; probeCanvas.height = ph;
+      probeCtx.save();
+      probeCtx.translate(pw, 0); probeCtx.scale(-1, 1);       // 与采集帧同一镜像方向
+      probeCtx.drawImage(video, 0, 0, pw, ph);
+      probeCtx.restore();
+      const url = probeCanvas.toDataURL('image/jpeg', 0.5);
+      const j = await api('/api/collect/probe', { method: 'POST', body: JSON.stringify({ frame: url }) });
+      if (j.ok) {
+        drawHands(j); liveMsg(j);
+        lastHands = j; lastProbeAt = Date.now();
+        if (window._onProbe) { try { window._onProbe(j); } catch (e) {} }
+      }
+    } catch (e) { /* 探测失败不打扰采集流程 */ }
+    finally { probeBusy = false; }
+  }
+}
+function startProbe() { if (!probeOn) { probeOn = true; probeLoop(); } }
+
+/* ---------------- 直播推流（本机模式）: 手机围观端看的就是这些帧 ---------------- */
+const mirrorCanvas = document.createElement('canvas');
+const mctx = mirrorCanvas.getContext('2d');
+let mirrorOn = false, mirrorBusy = false;
+
+function buildMirrorState() {
+  const l = curLabel();
+  return {
+    label: l ? l.label : '',
+    phase: counting ? 'count' : recording ? 'rec' : uploading ? 'up' : 'idle',
+    pending: l ? l.pending : 0,
+    formal: l ? l.formal : 0,
+    msg: (capMsg.textContent || '').slice(0, 90)
+  };
+}
+
+function drawMirrorFrame() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw) return null;
+  const mw = 480, mh = Math.max(1, Math.round(480 * vh / vw));
+  if (mirrorCanvas.width !== mw || mirrorCanvas.height !== mh) {
+    mirrorCanvas.width = mw; mirrorCanvas.height = mh;
+  }
+  // 和屏幕显示同方向(镜像), 围观者看到的角度跟操作者一致
+  mctx.save();
+  mctx.translate(mw, 0); mctx.scale(-1, 1);
+  mctx.drawImage(video, 0, 0, mw, mh);
+  mctx.restore();
+  // 手部骨架(用最近一次探测的 21 点, 坐标系与显示方向一致, 直接乘)
+  const one = (pts, color) => {
+    mctx.strokeStyle = color; mctx.lineWidth = 3; mctx.lineCap = 'round';
+    const X = p => p[0] * mw, Y = p => p[1] * mh;
+    for (const [a, b] of BONES) {
+      mctx.beginPath(); mctx.moveTo(X(pts[a]), Y(pts[a])); mctx.lineTo(X(pts[b]), Y(pts[b])); mctx.stroke();
+    }
+    mctx.fillStyle = '#fff';
+    for (const p of pts) { mctx.beginPath(); mctx.arc(X(p), Y(p), 3.5, 0, 6.284); mctx.fill(); }
+  };
+  if (lastHands) {
+    if (lastHands.right) one(lastHands.right, 'rgba(34,211,238,.95)');
+    if (lastHands.left) one(lastHands.left, 'rgba(251,191,36,.95)');
+  }
+  // 状态文字, 围观者不用猜"现在进行到哪一步"
+  const s = buildMirrorState();
+  const chip = (txt, x, y, bg) => {
+    mctx.font = 'bold 18px "Microsoft YaHei", sans-serif';
+    const w = mctx.measureText(txt).width + 18;
+    mctx.fillStyle = bg; mctx.beginPath();
+    mctx.roundRect ? mctx.roundRect(x, y, w, 30, 8) : mctx.rect(x, y, w, 30);
+    mctx.fill();
+    mctx.fillStyle = '#fff'; mctx.fillText(txt, x + 9, y + 21);
+  };
+  chip(s.label ? '标签：' + s.label : '未选标签', 10, 10, 'rgba(6,11,19,.78)');
+  if (s.phase === 'rec') chip('● 采集中', mw - 118, 10, 'rgba(239,68,68,.9)');
+  else if (s.phase === 'count') chip('⏱ 准备动作', mw - 140, 10, 'rgba(34,211,238,.85)');
+  else if (s.phase === 'up') chip('⏳ 提特征', mw - 118, 10, 'rgba(251,191,36,.9)');
+  return mirrorCanvas.toDataURL('image/jpeg', 0.55);
+}
+
+async function mirrorLoop() {
+  while (!probeStop) {
+    await sleep(200);
+    // 注意: 不检查 document.hidden —— 演示时操作者常把采集页切到后台
+    // (比如切到桌面软件/PPT), 后台也要继续推流, 围观端画面才不会断
+    if (probeStop || !video.videoWidth) continue;
+    if (mirrorBusy) continue;
+    mirrorBusy = true;
+    try {
+      const frame = drawMirrorFrame();
+      if (frame) {
+        await fetch('/api/collect/mirror/push', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ frame: frame, state: buildMirrorState() })
+        });
+      }
+    } catch (e) { /* 推流失败不影响采集 */ }
+    finally { mirrorBusy = false; }
+  }
+}
+function startMirror() { if (!mirrorOn) { mirrorOn = true; mirrorLoop(); } }
+
+function grabFrame(q) {
+  const vw = video.videoWidth || 640, vh = video.videoHeight || 480;
+  // 摄像头如果输出 16:9，直接压进 4:3 画布会把手指拉扁、影响识别率。
+  // 所以先中心裁成 4:3（训练样本就是这个比例）再缩放，手的形状不失真。
+  let sw = vw, sh = vh;
+  if (vw * 3 > vh * 4) sw = Math.round(vh * 4 / 3);          // 太宽 -> 裁左右
+  else if (vw * 3 < vh * 4) sh = Math.round(vw * 3 / 4);     // 太高 -> 裁上下
+  const sx = (vw - sw) / 2, sy = (vh - sh) / 2;
+
+  // 镜像绘制：和 1.py 里 cv2.flip 过的画面方向一致（训练样本就是这么采的）
+  capCtx.save();
+  capCtx.translate(capCanvas.width, 0);
+  capCtx.scale(-1, 1);
+  capCtx.drawImage(video, sx, sy, sw, sh, 0, 0, capCanvas.width, capCanvas.height);
+  capCtx.restore();
+  return capCanvas.toDataURL('image/jpeg', q || 0.7);
+}
+
+/* ============================================================
+   采集主流程（动作起止门控版）:
+   ① 3 秒倒计时(只是提醒, 不再"倒完就录")
+   ② 起手门控: 手进入画面(且手位符合标签要求)才正式开录
+   ③ 录制中持续盯手部关键点:
+        停住 0.6 秒 / 手放下离开画面 / 录满 3 秒 -> 自动结束
+   之前是"倒计时后死录 1.5 秒", 动作还没做就录上了, 只能采定格动作;
+   现在起止都由用户的手决定, 连贯动作能完整录进去(样本本来就是变长存储)。
+   ============================================================ */
+const REC_MAX_SEC = 3;      // 兜底上限(手势动作很少超过2秒, 录太长徒增提特征时间)
+const REC_MIN_SEC = 1.5;    // 最短录这么久才允许自动结束(20fps下30帧>后端25帧门槛)
+const STILL_MS = 600;       // 手部关键点静止这么久 = 动作做完了(用户拍板的数)
+const STILL_TH = 0.01;      // 关键点平均位移小于画面宽高的 1% 算"没动"
+
+async function capture() {
+  if (recording || counting || uploading) return;
+  const l = curLabel();
+  if (!l) return;
+  if (!video.videoWidth) { toast('摄像头还没就绪，等画面出来再点', 'err'); return; }
+
+  window._recCancel = false;
+  const rule = l.hand;                      // right / left / none
+  const ruleTxt = HAND[rule] || rule;
+  const capBtnBack = () => {
+    btnCap.textContent = '● 采集一条';
+    refreshLabel();
+  };
+
+  /* ① 倒计时（准备动作） */
+  counting = true;
+  refreshLabel();
+  for (let i = 3; i > 0; i--) {
+    btnCap.disabled = false; btnCap.textContent = '✕ 取消';   // 倒计时里按钮变取消
+    countEl.innerHTML = i + '<small>准备动作</small>';
+    countEl.classList.remove('on');
+    void countEl.offsetWidth;            // 强制重排，让每秒的动画都重播
+    countEl.classList.add('on');
+    capMsg.textContent = `倒计时 ${i} 秒 —— 准备做「${l.label}」（${ruleTxt}）`;
+    await sleep(1000);
+    if (window._recCancel) { counting = false; countEl.classList.remove('on'); capBtnBack(); capMsg.textContent = '已取消。'; return; }
+  }
+  countEl.innerHTML = '✋<small>把手举到画面里</small>';
+  capMsg.textContent = '等你的手进入画面就开始录…（点「✕ 取消」放弃）';
+
+  /* ② 起手门控：手在画面里 + 手位符合 -> 才开录。没就位就一个废帧都不录 */
+  const handOk = hs => {
+    if (!hs) return false;
+    if (rule === 'right') return !!hs.right;
+    if (rule === 'left') return !!hs.left;
+    return !!(hs.right || hs.left);
+  };
+  let armed = false;
+  while (!armed) {
+    if (window._recCancel) { counting = false; countEl.classList.remove('on'); capBtnBack(); capMsg.textContent = '已取消。'; return; }
+    await sleep(200);
+    const fresh = lastHands && (Date.now() - lastProbeAt < 2000);
+    armed = !!fresh && handOk(lastHands);
+    if (!armed && fresh && lastHands) {
+      const tip = rule === 'none' ? '' : `（这个标签要求用${ruleTxt}）`;
+      capMsg.textContent = '手还没到位' + tip + ' —— 把手举起来，检测到就自动开始录';
+    }
+  }
+  counting = false;
+  countEl.classList.remove('on');
+
+  /* ③ 录制：20fps 抓帧，同时盯探测结果判断动作结束 */
+  recording = true;
+  refreshLabel();
+  btnCap.disabled = false; btnCap.textContent = '✕ 取消';
+  camWrap.classList.add('recording');
+  progWrap.classList.add('live');
+  bar.style.width = '0';
+
+  const FPS = 20, frames = [];   // 20fps: 训练时反正压成10帧, 帧数少一半提特征快一半
+  const recStart = Date.now();
+  let prevPts = null, stillSince = null, done = false;
+  window._handGoneAt = null;
+
+  // 挂上探测回调: probeLoop 每次拿到手部关键点都会调它
+  window._onProbe = j => {
+    if (!recording) { prevPts = null; stillSince = null; return; }
+    const pts = [];
+    if (j.right) for (const p of j.right) pts.push(p[0], p[1]);
+    if (j.left)  for (const p of j.left)  pts.push(p[0], p[1]);
+    const now = Date.now();
+    if (!pts.length) { window._handGoneAt = window._handGoneAt || now; return; }
+    window._handGoneAt = null;
+    if (prevPts && pts.length === prevPts.length) {
+      let sum = 0;
+      for (let k = 0; k < pts.length; k++) sum += Math.abs(pts[k] - prevPts[k]);
+      if (sum / pts.length < STILL_TH) { if (!stillSince) stillSince = now; }
+      else stillSince = null;              // 在动 -> 重新计时
+    } else {
+      stillSince = null;                   // 手的数量变了(抬/放另一只), 重判
+    }
+    prevPts = pts;
+  };
+
+  const timer = setInterval(() => {
+    if (window._recCancel) { finish('手动取消'); return; }
+    frames.push(grabFrame(0.66));
+    const sec = (Date.now() - recStart) / 1000;
+    bar.style.width = Math.min(100, sec / REC_MAX_SEC * 100).toFixed(0) + '%';
+    document.getElementById('recTxt').textContent = sec.toFixed(1) + ' 秒';
+    capMsg.textContent = `做你的动作 —— 做完停 ${STILL_MS / 1000} 秒自动结束（上限 ${REC_MAX_SEC} 秒）`;
+
+    if (sec >= REC_MIN_SEC) {
+      // 手放下/离开画面 250ms 以上 -> 结束
+      if (window._handGoneAt && Date.now() - window._handGoneAt >= 250) return finish('手已放下');
+      // 关键点静止 STILL_MS -> 结束
+      if (stillSince && Date.now() - stillSince >= STILL_MS) return finish('动作完成');
+    }
+    if (sec >= REC_MAX_SEC) finish('到达上限');
+  }, 1000 / FPS);
+
+  async function finish(reason) {
+    if (done) return;
+    done = true;
+    clearInterval(timer);
+    window._onProbe = null; window._handGoneAt = null; prevPts = null; stillSince = null;
+    camWrap.classList.remove('recording');
+    progWrap.classList.remove('live');
+    recording = false;
+    uploading = true;
+    refreshLabel();
+    btnCap.textContent = '识别中…';
+    const secTxt = (frames.length / FPS).toFixed(1);
+    const est = Math.max(1, Math.round(frames.length / 22));
+    maskTxt.textContent = `正在识别手部关键点…（${frames.length} 帧 / ${secTxt} 秒，约 ${est}~${est * 2} 秒）`;
+    maskEl.classList.add('on');
+    capMsg.textContent = `已录 ${secTxt} 秒（${frames.length} 帧，${reason}），后端正在提特征…`;
+    if (reason === '手动取消') {
+      // 取消的不上传
+      uploading = false; maskEl.classList.remove('on'); bar.style.width = '0';
+      capBtnBack(); capMsg.textContent = '已取消，这条没保存。';
+      return;
+    }
+    try {
+      const j = await api('/api/collect/samples', {
+        method: 'POST',
+        body: JSON.stringify({label: l.label, frames: frames})
+      });
+      toast(`已保存第 ${j.total} 条（有效 ${j.frames} 帧 / ${secTxt} 秒）`, 'ok');
+      capMsg.innerHTML = `<span style="color:#4ade80">这条存进【待考核样本库】了</span>`
+        + `（有效 ${j.frames} 帧，右手 ${j.right_frames} / 左手 ${j.left_frames}）。`
+        + `换角度、换光照再补几条更稳。`;
+      await loadLabels(l.label);
+    } catch (e) {
+      toast(e.message, 'err');
+      capMsg.innerHTML = `<span style="color:#f87171;font-weight:600">这条没存上：</span>`
+        + `<span style="color:#fca5a5">${e.message}</span>`;
+    } finally {
+      uploading = false;
+      maskEl.classList.remove('on');
+      bar.style.width = '0';
+      capBtnBack();
+    }
+  }
+}
+
+/* ---------------- 样本列表 ---------------- */
+async function loadSamples() {
+  const l = curLabel();
+  if (!l) return;
+  try {
+    const j = await api('/api/collect/samples?label=' + encodeURIComponent(l.label));
+    thumbs.innerHTML = '';
+    document.getElementById('samTag').textContent = j.samples.length + ' 条';
+    document.getElementById('emptyTip').style.display = j.samples.length ? 'none' : 'block';
+    j.samples.forEach(s => {
+      const d = document.createElement('div');
+      d.className = 'thumb';
+      const ruleOk = (j.hand === 'right' && s.right_frames >= s.frames * 0.6)
+                  || (j.hand === 'left' && s.left_frames >= s.frames * 0.6)
+                  || (j.hand === 'none');
+      d.innerHTML = `
+        ${s.thumb ? `<img src="/api/collect/thumb/${encodeURIComponent(l.label)}/${encodeURIComponent(s.thumb)}" alt="">`
+                  : '<div style="aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;color:#3d4f66;font-size:12px">无缩略图</div>'}
+        <button class="del" title="删除这条">删除</button>
+        <div class="m">${s.frames} 帧 · R${s.right_frames}/L${s.left_frames}
+          <span class="${ruleOk ? 'yes' : 'no'}">${ruleOk ? '手位OK' : '手位不符'}</span></div>`;
+      d.querySelector('.del').onclick = async () => {
+        if (!confirm('删除这条样本？')) return;
+        try {
+          await api('/api/collect/samples', {
+            method: 'DELETE', body: JSON.stringify({label: l.label, name: s.name})
+          });
+          toast('已删除', 'ok');
+          await loadLabels(l.label);
+        } catch (e) { toast(e.message, 'err'); }
+      };
+      thumbs.appendChild(d);
+    });
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+/* ---------------- 自检 ---------------- */
+async function selfCheck() {
+  const l = curLabel();
+  if (!l) return;
+  btnCheck.disabled = true;
+  btnCheck.textContent = '自检中…（本地模型推理）';
+  try {
+    const j = await api('/api/collect/selfcheck', {
+      method: 'POST', body: JSON.stringify({label: l.label})
+    });
+    lastVerdict = j;
+    renderVerdict(j);
+  } catch (e) {
+    toast(e.message, 'err');
+  } finally {
+    btnCheck.textContent = '🔍 开始 AI 自检考核';
+    refreshLabel();
+  }
+}
+
+function renderVerdict(v) {
+  const card = document.getElementById('resultCard');
+  const box = document.getElementById('verdictBox');
+  card.style.display = 'block';
+  const det = (v.details || []).map(d => `
+      <tr>
+        <td>${d.name.replace(/\.npy$/, '')}</td>
+        <td>${d.model && d.model.pred ? d.model.pred : '—'}</td>
+        <td>${d.model && d.model.dist !== undefined ? d.model.dist : '—'}</td>
+        <td>R${(d.hand || {}).right_frames || 0}/L${(d.hand || {}).left_frames || 0}</td>
+        <td class="${d.ok ? 'yes' : 'no'}">${d.ok ? '通过' : (d.reason || '不通过')}</td>
+      </tr>`).join('');
+
+  const counts = `样本 ${v.samples} 条 · 通过率 ${(v.score * 100).toFixed(0)}% · 模型 ${((v.model_pass || 0) * 100).toFixed(0)}% · 手位 ${((v.hand_pass || 0) * 100).toFixed(0)}%`;
+
+  if (v.verdict === 'pass') {
+    box.innerHTML = `
+      <div class="verdict pass">
+        <h4>✅ AI 自检合格</h4>
+        <p>${v.reason}</p>
+        <div class="stat">${counts}</div>
+        <div class="row" style="margin-bottom:0">
+          <button class="btn" id="btnPromote">确认入库（转入正式动作库）</button>
+          <button class="btn gray" id="btnCloseV">先不入库</button>
+        </div>
+        <div class="mini">入库后样本会进 <code>sign_data/${v.label}/</code>，和原训练脚本完全兼容；
+          想让它参与识别，入库后再点“重新训练本地模型”。</div>
+      </div>
+      ${det ? `<table class="det"><tr><th>样本</th><th>模型识别</th><th>距离</th><th>左右手帧</th><th>结果</th></tr>${det}</table>` : ''}`;
+    document.getElementById('btnPromote').onclick = promote;
+    document.getElementById('btnCloseV').onclick = () => { card.style.display = 'none'; };
+  } else {
+    box.innerHTML = `
+      <div class="verdict fail">
+        <h4>⚠ AI 自检不合格</h4>
+        <p>${v.reason}</p>
+        <div class="stat">${counts}</div>
+        <div class="adv">${(v.advice || []).map(a => '· ' + a).join('<br>')}</div>
+        <div class="row" style="margin-bottom:0">
+          <button class="btn" id="btnMore">A · 继续补样本再自检</button>
+          <button class="btn warn" id="btnRe">B · 清空待考核样本重采</button>
+        </div>
+      </div>
+      ${det ? `<table class="det"><tr><th>样本</th><th>模型识别</th><th>距离</th><th>左右手帧</th><th>结果</th></tr>${det}</table>` : ''}`;
+    document.getElementById('btnMore').onclick = () => { card.style.display = 'none'; toast('接着采：换角度、换光照、按登记手位比', 'ok'); };
+    document.getElementById('btnRe').onclick = clearPending;
+  }
+  card.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+async function promote() {
+  const l = curLabel();
+  if (!l) return;
+  try {
+    const j = await api('/api/collect/promote', {
+      method: 'POST', body: JSON.stringify({label: l.label})
+    });
+    toast(`已入库 ${j.moved} 条到正式动作库（该标签共 ${j.formal} 条）`, 'ok');
+    document.getElementById('resultCard').style.display = 'none';
+    await loadLabels(l.label);
+    // 入库后提示重训
+    const box = document.getElementById('verdictBox');
+    document.getElementById('resultCard').style.display = 'block';
+    box.innerHTML = `<div class="verdict pass">
+        <h4>已转入正式动作库</h4>
+        <p>样本在 <code>sign_data/${j.label}/</code>，手位规则已绑定。
+           新动作要能被识别，需要把模型重训一次（用原来的 train_model.py）。</p>
+        <div class="row" style="margin-bottom:0">
+          <button class="btn" id="btnTrain">重新训练本地模型</button>
+          <button class="btn gray" id="btnSkipTrain">先不训练</button>
+        </div></div>`;
+    document.getElementById('btnTrain').onclick = retrain;
+    document.getElementById('btnSkipTrain').onclick = () => {
+      document.getElementById('resultCard').style.display = 'none';
+    };
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function retrain() {
+  const box = document.getElementById('verdictBox');
+  box.querySelector('button').disabled = true;
+  const b = box.querySelector('#btnTrain');
+  if (b) b.textContent = '训练中…';
+  try {
+    const j = await api('/api/collect/retrain', {method: 'POST', body: '{}'});
+    toast(j.msg || '训练完成', 'ok');
+    box.innerHTML = `<div class="verdict pass"><h4>模型已更新</h4>
+      <p>${(j.log || []).join('<br>')}</p>
+      <div class="mini">重启识别主程序（1.py / 桌面端）后，新词才会进入识别。</div></div>`;
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+async function clearPending() {
+  const l = curLabel();
+  if (!l) return;
+  if (!confirm(`清空「${l.label}」的全部待考核样本？\n（正式动作库里的样本不动）`)) return;
+  try {
+    const j = await api('/api/collect/labels/clear', {
+      method: 'POST', body: JSON.stringify({label: l.label})
+    });
+    toast(`已清空 ${j.removed} 条待考核样本，可以重新采集了`, 'ok');
+    document.getElementById('resultCard').style.display = 'none';
+    await loadLabels(l.label);
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+/* ---------------- 事件绑定 ---------------- */
+labelSel.onchange = refreshLabel;
+btnCap.onclick = () => {
+  // 倒计时/等手/录制中, 按钮是"✕ 取消"; 空闲时才是"采集一条"
+  if (counting || recording) { window._recCancel = true; return; }
+  capture();
+};
+btnCheck.onclick = selfCheck;
+btnClear.onclick = clearPending;
+
+document.getElementById('btnNewLabel').onclick = () => {
+  document.getElementById('newLabelBox').classList.toggle('on');
+};
+document.getElementById('btnCancelNew').onclick = () => {
+  document.getElementById('newLabelBox').classList.remove('on');
+};
+document.getElementById('btnCreate').onclick = async () => {
+  const name = document.getElementById('newLabelName').value.trim();
+  const hand = document.getElementById('newLabelHand').value;
+  if (!name) { toast('先给标签起个名字', 'err'); return; }
+  try {
+    await api('/api/collect/labels', {
+      method: 'POST', body: JSON.stringify({label: name, hand: hand})
+    });
+    toast(`标签「${name}」已创建（${HAND[hand]}），可以开始采集了`, 'ok');
+    document.getElementById('newLabelName').value = '';
+    document.getElementById('newLabelBox').classList.remove('on');
+    await loadLabels(name);
+  } catch (e) { toast(e.message, 'err'); }
+};
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) {
+    e.preventDefault();
+    btnCap.click();
+  }
+});
+
+// ---- 初始化: 本机 = 操作台(开摄像头+推流+心跳); 非本机 = 围观模式(只拉直播) ----
+if (isLocal) {
+  openCam();
+  loadLabels().catch(e => {
+    toast('标签加载失败：' + e.message, 'err');
+    ruleText.textContent = '后端接口没连上，确认 5000 服务在跑。';
+  });
+
+  // ---- 采集页心跳: 告诉桌面软件"采集页开着, 把摄像头让给我" ----
+  // 页面可见时每 3 秒报一次; 切到后台标签页就停报(后台用不到摄像头)
+  // 注意: 围观端(手机)绝不发心跳, 否则会让桌面软件白白让出摄像头
+  setInterval(() => {
+    if (!document.hidden) {
+      fetch('/api/collect/heartbeat', {method: 'POST'}).catch(() => {});
+    }
+  }, 3000);
+  fetch('/api/collect/heartbeat', {method: 'POST'}).catch(() => {});
+}
+{% endblock %}

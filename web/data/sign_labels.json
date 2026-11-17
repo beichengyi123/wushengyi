@@ -1,0 +1,81 @@
+{
+  "labels": {
+    "什么": {
+      "hand": "none",
+      "status": "formal",
+      "created": "",
+      "promoted_at": "2026-11-11 00:19:56"
+    },
+    "你": {
+      "hand": "none",
+      "status": "formal",
+      "created": ""
+    },
+    "你好": {
+      "hand": "none",
+      "status": "formal",
+      "created": ""
+    },
+    "再见": {
+      "hand": "none",
+      "status": "formal",
+      "created": ""
+    },
+    "去": {
+      "hand": "none",
+      "status": "formal",
+      "created": ""
+    },
+    "叫": {
+      "hand": "none",
+      "status": "formal",
+      "created": ""
+    },
+    "吃饭": {
+      "hand": "none",
+      "status": "formal",
+      "created": ""
+    },
+    "名字": {
+      "hand": "none",
+      "status": "formal",
+      "created": ""
+    },
+    "好": {
+      "hand": "none",
+      "status": "formal",
+      "created": ""
+    },
+    "学校": {
+      "hand": "none",
+      "status": "formal",
+      "created": "",
+      "promoted_at": "2026-11-08 13:45:12"
+    },
+    "帮助": {
+      "hand": "none",
+      "status": "formal",
+      "created": ""
+    },
+    "我": {
+      "hand": "none",
+      "status": "formal",
+      "created": ""
+    },
+    "现在": {
+      "hand": "none",
+      "status": "formal",
+      "created": ""
+    },
+    "要": {
+      "hand": "none",
+      "status": "formal",
+      "created": ""
+    },
+    "谢谢": {
+      "hand": "none",
+      "status": "formal",
+      "created": ""
+    }
+  }
+}
